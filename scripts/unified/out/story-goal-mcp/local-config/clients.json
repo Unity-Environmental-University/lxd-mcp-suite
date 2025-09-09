@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "story-goal-mcp": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "python3 /Users/hallie/Documents/repos/tools/lisa_brain/story_goal_mcp.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "cwd": "/Users/hallie/Documents/repos/tools/lisa_brain"
+    }
+  }
+}
