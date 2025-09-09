@@ -59,3 +59,9 @@ Where to get help
   - DNS: your.domain must point to the server’s IP for HTTPS.
   - Nginx reload: sudo nginx -t && sudo systemctl reload nginx
 
+
+
+---
+
+Maintainers
+- Steps and commands are kept in sync with `scripts/unified/ops_manifest.yaml`. When updating instructions, edit that file and re-run generators or adjust scripts accordingly.
