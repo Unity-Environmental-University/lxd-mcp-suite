@@ -65,7 +65,7 @@ if [[ -n "$GH_TOKEN" ]]; then export GITHUB_TOKEN="$GH_TOKEN"; fi
 bash scripts/get_suite.sh --base "$BASE" --use-gh || true
 
 echo "==> Generating Student Guide HTTP proxy"
-cd "$PWD"
+cd "$BASE/lisa_brain"
 python3 scripts/deploy/unified/mcp_installer.py --tool student-guide-mcp --target http-proxy-linux
 PROXY_OUT="scripts/deploy/unified/out/student-guide-mcp/http-proxy-linux"
 
