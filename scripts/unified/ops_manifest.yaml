@@ -1,0 +1,67 @@
+version: 1
+about:
+  title: LXD MCP Suite — Ops Manifest (Linux Droplet HTTPS)
+  intent: Single source of truth for the basic Student Guide MCP HTTPS setup. Human docs remain narrative; this file captures variables and exact commands.
+vars:
+  - name: DOMAIN
+    required: false
+    description: Public DNS name for the server (use the server IP if you don't have a domain yet)
+    example: mcp.example.edu
+  - name: EMAIL
+    required: false
+    description: Email for TLS certificate registration (only used when enabling TLS)
+    example: admin@example.edu
+  - name: GITHUB_TOKEN
+    required: false
+    description: Org token with repo read access (only needed for private repos if not using gh)
+    example: ghp_************************************
+  - name: PROXY_TOKEN
+    required: false
+    description: Long random string used as a bearer token for HTTPS calls to the proxy
+    example: change-me-LongRandomString
+  - name: TOOLS
+    required: false
+    default: student-guide-mcp
+    description: Comma-separated list of tools to install
+    example: student-guide-mcp,story-goal-mcp
+  - name: TARGETS
+    required: false
+    default: http-proxy-linux
+    description: Comma-separated targets (http-proxy-linux, linux-systemd)
+    example: http-proxy-linux,linux-systemd
+scenario:
+  id: linux_droplet_student_guide_https
+  title: Student Guide MCP over HTTPS (Linux droplet)
+  preconditions:
+    - Ubuntu/Debian server with sudo
+    - Internet access from the server
+    - Optional DNS record pointing DOMAIN to the server IP
+  steps:
+    - name: Install prerequisites
+      commands:
+        - sudo apt-get update -y
+        - sudo apt-get install -y git python3-venv python3-pip curl
+        - '[ -z "${ENABLE_TLS:-}" ] || sudo apt-get install -y nginx certbot python3-certbot-nginx'
+    - name: Fetch bootstrap (prefer gh; fall back to curl)
+      commands:
+        - 'if command -v gh >/dev/null 2>&1; then gh api repos/Unity-Environmental-University/lxd-mcp-suite/contents/scripts/unified/bootstrap_suite.sh?ref=main -H "Accept: application/vnd.github.raw" > bootstrap.sh; else curl ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} -H "Accept: application/vnd.github.raw" -L https://raw.githubusercontent.com/Unity-Environmental-University/lxd-mcp-suite/main/scripts/unified/bootstrap_suite.sh -o bootstrap.sh; fi'
+        - chmod +x bootstrap.sh
+    - name: Run installer (HTTPS)
+      commands:
+        - 'sudo bash bootstrap.sh ${DOMAIN:+--domain "$DOMAIN"} ${EMAIL:+--email "$EMAIL"} --install-nginx ${ENABLE_TLS:+--enable-tls} ${GITHUB_TOKEN:+--gh-token "$GITHUB_TOKEN"} ${PROXY_TOKEN:+--proxy-token "$PROXY_TOKEN"} ${TOOLS:+--tools "$TOOLS"} ${TARGETS:+--targets "$TARGETS"}'
+    - name: Verify local health
+      commands:
+        - curl -fsS http://127.0.0.1:8091/healthz
+      expect:
+        status: 200
+        body_contains: '"status":"ok"'
+    - name: Verify public health (if DOMAIN is set)
+      commands:
+        - '[ -z "${DOMAIN:-}" ] || curl -fsS "http${ENABLE_TLS:+s}://$DOMAIN/mcp/student-guide/healthz"'
+      expect:
+        status: 200
+        body_contains: '"status":"ok"'
+notes:
+  - Keep commands copy/pasteable; humans can ignore placeholders they don't need.
+  - If TLS fails, the proxy will still run on HTTP through Nginx.
+  - If the repo is public or gh is configured, GITHUB_TOKEN is not required.
