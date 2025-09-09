@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "student-guide-mcp": {
+      "command": "python3",
+      "args": ["/ABS/PATH/student-guide-mcp/mcp_server.py"],
+      "env": { "GUIDE_DB_PATH": "/ABS/PATH/.local_context/draftguide.db" }
+    },
+    "kanban-mcp": {
+      "command": "python3",
+      "args": ["/ABS/PATH/kanban-mcp/mcp_server.py"],
+      "env": { "KANBAN_DB_PATH": "/ABS/PATH/.local_context/kanban.db" }
+    },
+    "story-goal-mcp": {
+      "command": "python3",
+      "args": ["/ABS/PATH/story-goal-mcp/mcp_server.py"],
+      "env": { "PYTHONUNBUFFERED": "1" }
+    },
+    "reflection-mcp": {
+      "command": "python3",
+      "args": ["/ABS/PATH/reflection-mcp/mcp_server.py"],
+      "env": { }
+    }
+  }
+}
