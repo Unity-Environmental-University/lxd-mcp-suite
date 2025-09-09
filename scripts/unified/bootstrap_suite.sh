@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bootstrap /opt/mcp-suite with Student Guide MCP HTTPS proxy using the unified installer.
+# Requires: Ubuntu/Debian, sudo/root.
+#
+# Examples:
+#   sudo bash scripts/deploy/unified/bootstrap_suite.sh \
+#     --domain your.domain --install-nginx --enable-tls --email you@domain \
+#     --gh-token "<github-token>" --proxy-token "<bearer-token>"
+#
+# Flags
+BASE="/opt/mcp-suite"
+DOMAIN=""
+EMAIL=""
+INSTALL_NGINX=false
+ENABLE_TLS=false
+GH_TOKEN=""
+PROXY_TOKEN=""
+BRANCH="main"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base) BASE="$2"; shift 2 ;;
+    --domain) DOMAIN="$2"; shift 2 ;;
+    --email) EMAIL="$2"; shift 2 ;;
+    --install-nginx) INSTALL_NGINX=true; shift ;;
+    --enable-tls) ENABLE_TLS=true; shift ;;
+    --gh-token) GH_TOKEN="$2"; shift 2 ;;
+    --proxy-token) PROXY_TOKEN="$2"; shift 2 ;;
+    --branch) BRANCH="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+req() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1" >&2; exit 1; }; }
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y git python3-venv python3-pip curl
+
+if $INSTALL_NGINX; then
+  apt-get install -y nginx
+  if $ENABLE_TLS; then
+    apt-get install -y certbot python3-certbot-nginx
+  fi
+fi
+
+mkdir -p "$BASE"
+cd "$BASE"
+
+echo "==> Cloning lisa_brain"
+if [[ -d lisa_brain/.git ]]; then
+  git -C lisa_brain fetch --prune && git -C lisa_brain checkout "$BRANCH" && git -C lisa_brain pull --ff-only || true
+else
+  if [[ -n "$GH_TOKEN" ]]; then
+    git clone --depth 1 --branch "$BRANCH" "https://$GH_TOKEN@github.com/Unity-Environmental-University/lisa_brain.git"
+  else
+    git clone --depth 1 --branch "$BRANCH" https://github.com/Unity-Environmental-University/lisa_brain.git
+  fi
+fi
+
+echo "==> Cloning suite siblings"
+if [[ -n "$GH_TOKEN" ]]; then export GITHUB_TOKEN="$GH_TOKEN"; fi
+bash scripts/get_suite.sh --base "$BASE" --use-gh || true
+
+echo "==> Generating Student Guide HTTP proxy"
+cd "$PWD"
+python3 scripts/deploy/unified/mcp_installer.py --tool student-guide-mcp --target http-proxy-linux
+PROXY_OUT="scripts/deploy/unified/out/student-guide-mcp/http-proxy-linux"
+
+echo "==> Creating venv and installing proxy deps"
+python3 -m venv "$PROXY_OUT/.venv"
+source "$PROXY_OUT/.venv/bin/activate"
+pip install -r "$PROXY_OUT/requirements.txt"
+deactivate
+
+echo "==> Installing systemd service"
+SERVICE_DST="/etc/systemd/system/mcp-student-guide-mcp-proxy.service"
+cp "$PROXY_OUT/mcp-student-guide-mcp-proxy.service" "$SERVICE_DST"
+
+if [[ -n "$PROXY_TOKEN" ]]; then
+  # Inject TOKEN into unit for bearer auth
+  sed -i "s/^Environment=TOKEN=.*$/Environment=TOKEN=$PROXY_TOKEN/" "$SERVICE_DST"
+fi
+
+systemctl daemon-reload
+systemctl enable --now mcp-student-guide-mcp-proxy.service
+sleep 1
+curl -fsS http://127.0.0.1:8091/healthz >/dev/null || { echo "Proxy health check failed on 8091" >&2; exit 1; }
+
+if $INSTALL_NGINX; then
+  if [[ -n "$DOMAIN" ]]; then
+    echo "==> Configuring nginx for $DOMAIN"
+    cat > /etc/nginx/sites-available/mcp-student-guide <<NGINX
+server {
+    listen 80;
+    server_name $DOMAIN;
+    location /mcp/student-guide/ {
+        proxy_pass http://127.0.0.1:8091/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX
+    ln -sf /etc/nginx/sites-available/mcp-student-guide /etc/nginx/sites-enabled/mcp-student-guide
+    nginx -t && systemctl reload nginx
+    if $ENABLE_TLS; then
+      if [[ -n "$EMAIL" ]]; then
+        certbot --nginx -d "$DOMAIN" --agree-tos -m "$EMAIL" --non-interactive || echo "Certbot failed; continuing with HTTP"
+      fi
+    fi
+  fi
+fi
+
+echo
+echo "Done. Endpoints:"
+echo "- Local health:  http://127.0.0.1:8091/healthz"
+if [[ -n "$DOMAIN" ]]; then
+  echo "- Public health: http${ENABLE_TLS:+s}://$DOMAIN/mcp/student-guide/healthz"
+  echo "- Public call:   http${ENABLE_TLS:+s}://$DOMAIN/mcp/student-guide/call (Authorization: Bearer $PROXY_TOKEN)"
+fi
+

@@ -1,0 +1,26 @@
+tools:
+  student-guide-mcp:
+    kind: stdio
+    cmd: |
+      ${REPO_ROOT}/../student-guide-mcp/mcp_server.py
+    cwd: ${REPO_ROOT}/../student-guide-mcp
+    description: Student coaching MCP (no drafting)
+  story-goal-mcp:
+    kind: stdio
+    cmd: |
+      python3 ${REPO_ROOT}/story_goal_mcp.py
+    cwd: ${REPO_ROOT}
+    description: Story/Goal MCP server (stdio)
+  reflection-mcp:
+    kind: stdio
+    cmd: |
+      python3 ${REPO_ROOT}/reflection_mcp/mcp_server.py
+    cwd: ${REPO_ROOT}
+    description: Reflection MCP server (stdio)
+  retrospective-mcp:
+    kind: stdio
+    cmd: |
+      python3 ${REPO_ROOT}/retrospective_mcp/mcp_server.py
+    cwd: ${REPO_ROOT}
+    description: Retrospective MCP (stdio)
+
