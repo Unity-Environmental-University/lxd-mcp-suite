@@ -14,7 +14,7 @@ set -euo pipefail
 ORG="Unity-Environmental-University"
 BASE_DIR="$(pwd)"
 REPOS="student-guide-mcp,kanban-mcp,story-goal-mcp,reflection-mcp,lxd-mcp-suite"
-USE_GH=true
+USE_GH=false
 BRANCH="main"
 
 while [[ $# -gt 0 ]]; do

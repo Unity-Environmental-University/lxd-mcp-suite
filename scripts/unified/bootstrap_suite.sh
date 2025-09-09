@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Bootstrap /opt/mcp-suite with Student Guide MCP HTTPS proxy using the unified installer.
+# Bootstrap /opt/mcp-suite with HTTPS proxies and/or services for selected tools.
 # Requires: Ubuntu/Debian, sudo/root.
 #
 # Examples:
-#   sudo bash scripts/deploy/unified/bootstrap_suite.sh \
+#   sudo bash scripts/unified/bootstrap_suite.sh \
 #     --domain your.domain --install-nginx --enable-tls --email you@domain \
-#     --gh-token "<github-token>" --proxy-token "<bearer-token>"
-#
-# Flags
+#     --gh-token "<github-token>" --proxy-token "<bearer-token>" \
+#     --tools student-guide-mcp,story-goal-mcp --targets http-proxy-linux
+
 BASE="/opt/mcp-suite"
 DOMAIN=""
 EMAIL=""
@@ -18,6 +18,8 @@ ENABLE_TLS=false
 GH_TOKEN=""
 PROXY_TOKEN=""
 BRANCH="main"
+TOOLS="student-guide-mcp"
+TARGETS="http-proxy-linux"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,11 +31,11 @@ while [[ $# -gt 0 ]]; do
     --gh-token) GH_TOKEN="$2"; shift 2 ;;
     --proxy-token) PROXY_TOKEN="$2"; shift 2 ;;
     --branch) BRANCH="$2"; shift 2 ;;
+    --tools) TOOLS="$2"; shift 2 ;;
+    --targets) TARGETS="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
-
-req() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1" >&2; exit 1; }; }
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -49,53 +51,52 @@ fi
 mkdir -p "$BASE"
 cd "$BASE"
 
-echo "==> Cloning lisa_brain"
-if [[ -d lisa_brain/.git ]]; then
-  git -C lisa_brain fetch --prune && git -C lisa_brain checkout "$BRANCH" && git -C lisa_brain pull --ff-only || true
+# Clone or update suite (current repo)
+if [[ -d .git ]]; then
+  git fetch --prune && git checkout "$BRANCH" && git pull --ff-only || true
 else
-  if [[ -n "$GH_TOKEN" ]]; then
-    git clone --depth 1 --branch "$BRANCH" "https://$GH_TOKEN@github.com/Unity-Environmental-University/lisa_brain.git"
-  else
-    git clone --depth 1 --branch "$BRANCH" https://github.com/Unity-Environmental-University/lisa_brain.git
-  fi
+  echo "==> Ensure you are executing this script from the suite repo or fetched via raw URL"
 fi
 
-echo "==> Cloning suite siblings"
+# Clone siblings via get_suite
 if [[ -n "$GH_TOKEN" ]]; then export GITHUB_TOKEN="$GH_TOKEN"; fi
 bash scripts/get_suite.sh --base "$BASE" --use-gh || true
 
-echo "==> Generating Student Guide HTTP proxy"
-cd "$PWD"
-python3 scripts/deploy/unified/mcp_installer.py --tool student-guide-mcp --target http-proxy-linux
-PROXY_OUT="scripts/deploy/unified/out/student-guide-mcp/http-proxy-linux"
+# Generate for each tool/target
+IFS=',' read -r -a TOOL_ARR <<< "$TOOLS"
+IFS=',' read -r -a TARGET_ARR <<< "$TARGETS"
 
-echo "==> Creating venv and installing proxy deps"
-python3 -m venv "$PROXY_OUT/.venv"
-source "$PROXY_OUT/.venv/bin/activate"
-pip install -r "$PROXY_OUT/requirements.txt"
-deactivate
+for tool in "${TOOL_ARR[@]}"; do
+  for tgt in "${TARGET_ARR[@]}"; do
+    echo "==> Generating $tgt for $tool"
+    python3 scripts/unified/mcp_installer.py --tool "$tool" --target "$tgt"
+    if [[ "$tgt" == "http-proxy-linux" ]]; then
+      OUTDIR="scripts/unified/out/$tool/http-proxy-linux"
+      echo "==> Installing proxy for $tool"
+      python3 -m venv "$OUTDIR/.venv"
+      source "$OUTDIR/.venv/bin/activate"
+      pip install -r "$OUTDIR/requirements.txt"
+      deactivate
+      SVC="/etc/systemd/system/mcp-$tool-proxy.service"
+      cp "$OUTDIR/mcp-$tool-proxy.service" "$SVC"
+      if [[ -n "$PROXY_TOKEN" ]]; then sed -i "s/^Environment=TOKEN=.*$/Environment=TOKEN=$PROXY_TOKEN/" "$SVC"; fi
+      systemctl daemon-reload
+      systemctl enable --now "mcp-$tool-proxy.service"
+      sleep 1
+      curl -fsS http://127.0.0.1:8091/healthz >/dev/null || echo "Warning: proxy health not responding for $tool (port 8091 shared; deploy one tool per host or adjust ports)"
+    fi
+  done
+done
 
-echo "==> Installing systemd service"
-SERVICE_DST="/etc/systemd/system/mcp-student-guide-mcp-proxy.service"
-cp "$PROXY_OUT/mcp-student-guide-mcp-proxy.service" "$SERVICE_DST"
-
-if [[ -n "$PROXY_TOKEN" ]]; then
-  # Inject TOKEN into unit for bearer auth
-  sed -i "s/^Environment=TOKEN=.*$/Environment=TOKEN=$PROXY_TOKEN/" "$SERVICE_DST"
-fi
-
-systemctl daemon-reload
-systemctl enable --now mcp-student-guide-mcp-proxy.service
-sleep 1
-curl -fsS http://127.0.0.1:8091/healthz >/dev/null || { echo "Proxy health check failed on 8091" >&2; exit 1; }
-
-if $INSTALL_NGINX; then
-  if [[ -n "$DOMAIN" ]]; then
-    echo "==> Configuring nginx for $DOMAIN"
-    cat > /etc/nginx/sites-available/mcp-student-guide <<NGINX
+# Nginx (basic) for student-guide path; other tools require additional locations
+if $INSTALL_NGINX && [[ -n "$DOMAIN" ]]; then
+  echo "==> Configuring nginx for $DOMAIN (student-guide path)"
+  cat > /etc/nginx/sites-available/mcp-suite <<NGINX
 server {
     listen 80;
     server_name $DOMAIN;
+    # Rate limiting (optional): uncomment the lines below and include the map/zone in nginx.conf
+    # limit_req zone=mcp burst=10 nodelay;
     location /mcp/student-guide/ {
         proxy_pass http://127.0.0.1:8091/;
         proxy_set_header Host \$host;
@@ -105,21 +106,20 @@ server {
     }
 }
 NGINX
-    ln -sf /etc/nginx/sites-available/mcp-student-guide /etc/nginx/sites-enabled/mcp-student-guide
-    nginx -t && systemctl reload nginx
-    if $ENABLE_TLS; then
-      if [[ -n "$EMAIL" ]]; then
-        certbot --nginx -d "$DOMAIN" --agree-tos -m "$EMAIL" --non-interactive || echo "Certbot failed; continuing with HTTP"
-      fi
+  ln -sf /etc/nginx/sites-available/mcp-suite /etc/nginx/sites-enabled/mcp-suite
+  nginx -t && systemctl reload nginx
+  if $ENABLE_TLS; then
+    if [[ -n "$EMAIL" ]]; then
+      certbot --nginx -d "$DOMAIN" --agree-tos -m "$EMAIL" --non-interactive || echo "Certbot failed; continuing with HTTP"
     fi
   fi
 fi
 
 echo
 echo "Done. Endpoints:"
-echo "- Local health:  http://127.0.0.1:8091/healthz"
+echo "- Local health:  http://127.0.0.1:8091/healthz (shared port)"
 if [[ -n "$DOMAIN" ]]; then
   echo "- Public health: http${ENABLE_TLS:+s}://$DOMAIN/mcp/student-guide/healthz"
   echo "- Public call:   http${ENABLE_TLS:+s}://$DOMAIN/mcp/student-guide/call (Authorization: Bearer $PROXY_TOKEN)"
+  echo "Add more locations in nginx for other tools (see scripts/unified/out/<tool>/http-proxy-linux/nginx.conf.example)"
 fi
-

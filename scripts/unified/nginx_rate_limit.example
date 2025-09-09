@@ -1,0 +1,6 @@
+# Add to nginx.conf (http block)
+map $request_uri $mcp_limit_burst { default 10; }
+limit_req_zone $binary_remote_addr zone=mcp:10m rate=5r/s;
+
+# Then in your server/location (e.g., /mcp/student-guide/):
+limit_req zone=mcp burst=$mcp_limit_burst nodelay;
