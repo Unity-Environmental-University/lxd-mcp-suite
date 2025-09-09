@@ -1,3 +1,4 @@
+
 # LXD MCP Suite
 
 Human-friendly quickstarts, MCP client configs, and bootstrap scripts for the Learning eXperience Design (LXD) MCP Suite:
@@ -19,3 +20,5 @@ Human-friendly quickstarts, MCP client configs, and bootstrap scripts for the Le
 
 ## Bootstrap
 Use `scripts/bootstrap.sh` to add servers to your MCP client (adjust paths inside). It generates a local MCP config JSON you can paste into your client.
+
+> Internal Use Only — not licensed for external distribution or hosting.
